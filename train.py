@@ -40,10 +40,10 @@ except ImportError:
     TENSORBOARD_FOUND = False
 def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_iterations, 
                          checkpoint_iterations, checkpoint, debug_from,
-                         gaussians, scene, stage, tb_writer, train_iter,timer):
+                         gaussians, scene, stage, tb_writer, train_iter,timer): 
     first_iter = 0
 
-    gaussians.training_setup(opt)
+    gaussians.training_setup(opt)   #传入优化器参数，设置模型的部分参数，详见底下main中的op的模型参数
     if checkpoint:
         # breakpoint()
         if stage == "coarse" and stage not in checkpoint:
@@ -55,19 +55,20 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             gaussians.restore(model_params, opt)
 
 
-    bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
-    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]     #设置背景颜色，根据数据集是否有白色背景来选择。
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")     #将背景颜色转化为 PyTorch Tensor，并移到 GPU 上。
 
-    iter_start = torch.cuda.Event(enable_timing = True)
+    # 创建两个 CUDA 事件，用于测量迭代时间。
+    iter_start = torch.cuda.Event(enable_timing = True) 
     iter_end = torch.cuda.Event(enable_timing = True)
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
-    ema_psnr_for_log = 0.0
+    ema_psnr_for_log = 0.0      #计算PSNR
 
-    final_iter = train_iter
+    final_iter = train_iter     #3000
     
-    progress_bar = tqdm(range(first_iter, final_iter), desc="Training progress")
+    progress_bar = tqdm(range(first_iter, final_iter), desc="Training progress")    #进度条
     first_iter += 1
     # lpips_model = lpips.LPIPS(net="alex").cuda()
     video_cams = scene.getVideoCameras()
@@ -75,12 +76,12 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
     train_cams = scene.getTrainCameras()
 
 
-    if not viewpoint_stack and not opt.dataloader:
+    if not viewpoint_stack and not opt.dataloader:      #专门给dnerf准备的,但是这里什么原因不是很清楚
         # dnerf's branch
         viewpoint_stack = [i for i in train_cams]
         temp_list = copy.deepcopy(viewpoint_stack)
     # 
-    batch_size = opt.batch_size
+    batch_size = opt.batch_size     #batchSize=1
     print("data loading done")
     if opt.dataloader:
         viewpoint_stack = scene.getTrainCameras()
@@ -135,14 +136,14 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
 
         iter_start.record()
 
-        gaussians.update_learning_rate(iteration)
+        gaussians.update_learning_rate(iteration)       #手动实现一个学习率衰减的函数，对数线性插值的学习率衰减
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
+        if iteration % 1000 == 0:       #每1000次迭代增加球谐函数的阶数，直到到达3阶
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
-
+        #随机选择一个训练相机
         # dynerf's branch
         if opt.dataloader and not load_in_memory:
             try:
@@ -158,11 +159,11 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             idx = 0
             viewpoint_cams = []
 
-            while idx < batch_size :    
+            while idx < batch_size :        #用viewpoint_cams组织batch_size的训练数据
                     
                 viewpoint_cam = viewpoint_stack.pop(randint(0,len(viewpoint_stack)-1))
-                if not viewpoint_stack :
-                    viewpoint_stack =  temp_list.copy()
+                if not viewpoint_stack :        #如果取完了则重新取反复训练
+                    viewpoint_stack =  temp_list.copy()         
                 viewpoint_cams.append(viewpoint_cam)
                 idx +=1
             if len(viewpoint_cams) == 0:
@@ -177,8 +178,8 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         radii_list = []
         visibility_filter_list = []
         viewspace_point_tensor_list = []
-        for viewpoint_cam in viewpoint_cams:
-            render_pkg = render(viewpoint_cam, gaussians, pipe, background, stage=stage,cam_type=scene.dataset_type)
+        for viewpoint_cam in viewpoint_cams:    #这里面是一个batchSize的相机数据,
+            render_pkg = render(viewpoint_cam, gaussians, pipe, background, stage=stage,cam_type=scene.dataset_type)    #感觉是
             image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
             images.append(image.unsqueeze(0))
             if scene.dataset_type!="PanopticSports":
@@ -294,13 +295,13 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" +f"_{stage}_" + str(iteration) + ".pth")
-def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, expname):
+def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, expname):     #命名可知，送进来的是数据集，超参数，优化器，主要模型参数
     # first_iter = 0
-    tb_writer = prepare_output_and_logger(expname)
-    gaussians = GaussianModel(dataset.sh_degree, hyper)
+    tb_writer = prepare_output_and_logger(expname)  #设置TensorBoard写入器和日志记录器
+    gaussians = GaussianModel(dataset.sh_degree, hyper) #(重点)，创建一个GaussianModel的实例，输入球谐函数的阶数和ModelHidden的参数
     dataset.model_path = args.model_path
     timer = Timer()
-    scene = Scene(dataset, gaussians, load_coarse=None)
+    scene = Scene(dataset, gaussians, load_coarse=None)      #（这个类的主要目的是处理场景的初始化、保存和获取相机信息等任务，）创建一个 Scene 类的实例，使用数据集和之前创建的 GaussianModel 实例作为参数。
     timer.start()
     scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_iterations,
                              checkpoint_iterations, checkpoint, debug_from,
@@ -389,6 +390,8 @@ def setup_seed(seed):
      np.random.seed(seed)
      random.seed(seed)
      torch.backends.cudnn.deterministic = True
+     
+     
 if __name__ == "__main__":
     # Set up command line argument parser
     # torch.set_default_tensor_type('torch.FloatTensor')
@@ -398,7 +401,7 @@ if __name__ == "__main__":
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
-    hp = ModelHiddenParams(parser)
+    hp = ModelHiddenParams(parser)      #这里和3DGS不同的地方
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
@@ -424,9 +427,15 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # Start GUI server, configure and run training
-    network_gui.init(args.ip, args.port)
-    torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    network_gui.init(args.ip, args.port)        
+    #这行代码初始化一个GUI服务器，使用IP和PORT作为参数，
+    # 可能是一个用于监视和控制训练过程的图形化界面的一部分  --hzl
+    
+    torch.autograd.set_detect_anomaly(args.detect_anomaly)  
+    #这行代码设置pytorch是否要检测梯度计算中的异常 --hzl
+    
     training(lp.extract(args), hp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.expname)
+    #输入的参数包括：模型的参数(传入的数据集的位置)、优化器的参数、pipeline的参数、模型隐藏的参数、测试迭代次数、保存迭代次数、检查点迭代次数、开始检查点、调试起点、数据集的位置
 
     # All done
     print("\nTraining complete.")

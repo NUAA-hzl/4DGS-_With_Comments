@@ -37,7 +37,7 @@ def get_expon_lr_func(
 ):
     """
     Copied from Plenoxels
-
+这是一个连续的学习率衰减函数，改编自 JaxNeRF。返回的速率在步数 step 为0时是 lr_init，在步数 step 等于 max_steps 时是 lr_final，并且在其他地方是按对数线性插值（等同于指数衰减）。如果 lr_delay_steps 大于0，那么学习率将通过 lr_delay_mult 的某个平滑函数进行缩放，这样在优化开始时初始学习率是 lr_init 乘以 lr_delay_mult，但是在步数 steps 大于 lr_delay_steps 时将逐渐过渡回正常的学习率。
     Continuous learning rate decay function. Adapted from JaxNeRF
     The returned rate is lr_init when step=0 and lr_final when step=max_steps, and
     is log-linearly interpolated elsewhere (equivalent to exponential decay).
@@ -61,8 +61,8 @@ def get_expon_lr_func(
             )
         else:
             delay_rate = 1.0
-        t = np.clip(step / max_steps, 0, 1)
-        log_lerp = np.exp(np.log(lr_init) * (1 - t) + np.log(lr_final) * t)
+        t = np.clip(step / max_steps, 0, 1)     #使用线性插值进行衰减
+        log_lerp = np.exp(np.log(lr_init) * (1 - t) + np.log(lr_final) * t)     #再用对数过一遍，就是对数线性插值，约等于指数衰减
         return delay_rate * log_lerp
 
     return helper

@@ -48,21 +48,21 @@ class Deformation(nn.Module):
             
             grid_out_dim = self.grid.feat_dim+(self.grid.feat_dim)*2 
         else:
-            grid_out_dim = self.grid.feat_dim
+            grid_out_dim = self.grid.feat_dim       #这里似乎是属性的维度
         if self.no_grid:
             self.feature_out = [nn.Linear(4,self.W)]
         else:
-            self.feature_out = [nn.Linear(mlp_out_dim + grid_out_dim ,self.W)]
+            self.feature_out = [nn.Linear(mlp_out_dim + grid_out_dim ,self.W)]      #64,64
         
-        for i in range(self.D-1):
+        for i in range(self.D-1):       #根据设定的深度创建mlp
             self.feature_out.append(nn.ReLU())
             self.feature_out.append(nn.Linear(self.W,self.W))
         self.feature_out = nn.Sequential(*self.feature_out)
-        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3))
-        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3))
-        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 4))
-        self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))
-        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 16*3))
+        self.pos_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3))         #关于位置的deform:1.Relu;2.Linear(64,64);3.Relu;4.Linear(64,3)-->xyz
+        self.scales_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 3))      #关于缩放比例的deform:1.Relu;2.Linear(64,64);3.Relu;4.Linear(64,3)--->xyz(scale)
+        self.rotations_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 4))   #关于旋转矩阵的deform:1.Relu;2.Linear(64,64);3.Relu;4.Linear(64,4)--->旋转的四元数
+        self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))     #关于透明度的deform:1.Relu;2.Linear(64,64);3.Relu;4.Linear(64,1)--->opacity
+        self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 16*3))      #关于球谐函数的deform:1.Relu;2.Linear(64,64);3.Relu;4.Linear(64,16*3)--->这里我不太懂为什么是16*3
 
     def query_time(self, rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb):
 
@@ -161,24 +161,24 @@ class Deformation(nn.Module):
 class deform_network(nn.Module):
     def __init__(self, args) :
         super(deform_network, self).__init__()
-        net_width = args.net_width
-        timebase_pe = args.timebase_pe
-        defor_depth= args.defor_depth
-        posbase_pe= args.posebase_pe
-        scale_rotation_pe = args.scale_rotation_pe
-        opacity_pe = args.opacity_pe
-        timenet_width = args.timenet_width
-        timenet_output = args.timenet_output
-        grid_pe = args.grid_pe
-        times_ch = 2*timebase_pe+1
-        self.timenet = nn.Sequential(
+        net_width = args.net_width                      #网络的宽度，一般就是进去之后第一层linear的输出尺寸--64
+        timebase_pe = args.timebase_pe                  #4
+        defor_depth= args.defor_depth                   #0
+        posbase_pe= args.posebase_pe                    #10
+        scale_rotation_pe = args.scale_rotation_pe      #2
+        opacity_pe = args.opacity_pe                    #2
+        timenet_width = args.timenet_width              #64
+        timenet_output = args.timenet_output            #时间net的输出维度---32
+        grid_pe = args.grid_pe                          #0
+        times_ch = 2*timebase_pe+1                      #时间的通道9
+        self.timenet = nn.Sequential(                   #时间网络的结构:1.全连接层(输入为9，输出为64);2.Relu激活层;3.全连接层(输入为64，输出为32)
         nn.Linear(times_ch, timenet_width), nn.ReLU(),
-        nn.Linear(timenet_width, timenet_output))
+        nn.Linear(timenet_width, timenet_output))                                       #下面input_ch的输入维度构建我没有看懂
         self.deformation_net = Deformation(W=net_width, D=defor_depth, input_ch=(3)+(3*(posbase_pe))*2, grid_pe=grid_pe, input_ch_time=timenet_output, args=args)
-        self.register_buffer('time_poc', torch.FloatTensor([(2**i) for i in range(timebase_pe)]))
-        self.register_buffer('pos_poc', torch.FloatTensor([(2**i) for i in range(posbase_pe)]))
-        self.register_buffer('rotation_scaling_poc', torch.FloatTensor([(2**i) for i in range(scale_rotation_pe)]))
-        self.register_buffer('opacity_poc', torch.FloatTensor([(2**i) for i in range(opacity_pe)]))
+        self.register_buffer('time_poc', torch.FloatTensor([(2**i) for i in range(timebase_pe)]))       #1,2,4,8
+        self.register_buffer('pos_poc', torch.FloatTensor([(2**i) for i in range(posbase_pe)]))         #1,2,4,8,16……512
+        self.register_buffer('rotation_scaling_poc', torch.FloatTensor([(2**i) for i in range(scale_rotation_pe)]))     #1,2
+        self.register_buffer('opacity_poc', torch.FloatTensor([(2**i) for i in range(opacity_pe)]))     #1,2 猜测这里是用来保存各个信息的位置编码的
         self.apply(initialize_weights)
         # print(self)
 

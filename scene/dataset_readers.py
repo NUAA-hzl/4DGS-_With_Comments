@@ -52,25 +52,25 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
     maxtime: int
-
+#这段代码定义了一个名为 getNerfppNorm 的函数，它的作用是计算一组相机信息的规范化参数，这些参数可以用于神经辐射场（NeRF）或其他三维重建任务中的标准化处理。具体来说，这个函数计算了所有相机中心的平均位置（中心）和最远相机中心到这个平均位置的距离（对角线长度，即范围），然后使用这些值来定义一个规范化变换。
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
         cam_centers = np.hstack(cam_centers)
-        avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
+        avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)    #所有相机的中心位置
         center = avg_cam_center
         dist = np.linalg.norm(cam_centers - center, axis=0, keepdims=True)
         diagonal = np.max(dist)
         return center.flatten(), diagonal
 
     cam_centers = []
-
+    #计算相机的世界坐标的中心，返回xyz
     for cam in cam_info:
         W2C = getWorld2View2(cam.R, cam.T)
         C2W = np.linalg.inv(W2C)
         cam_centers.append(C2W[:3, 3:4])
 
-    center, diagonal = get_center_and_diag(cam_centers)
-    radius = diagonal * 1.1
+    center, diagonal = get_center_and_diag(cam_centers) #获取所有相机的平均位置和最远相机距离中心的距离
+    radius = diagonal * 1.1     #确保安全距离
 
     translate = -center
     # breakpoint()
@@ -202,20 +202,20 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
     [1,0,0,0],
     [0,1,0,0],
     [0,0,1,t],
-    [0,0,0,1]]).float()
+    [0,0,0,1]]).float()     #平移变换矩阵
 
     rot_phi = lambda phi : torch.Tensor([
         [1,0,0,0],
         [0,np.cos(phi),-np.sin(phi),0],
         [0,np.sin(phi), np.cos(phi),0],
-        [0,0,0,1]]).float()
+        [0,0,0,1]]).float()     #绕X轴上部旋转矩阵
 
     rot_theta = lambda th : torch.Tensor([
         [np.cos(th),0,-np.sin(th),0],
         [0,1,0,0],
         [np.sin(th),0, np.cos(th),0],
-        [0,0,0,1]]).float()
-    def pose_spherical(theta, phi, radius):
+        [0,0,0,1]]).float()     #绕y轴右部旋转矩阵
+    def pose_spherical(theta, phi, radius):     #根据球坐标系中的参数（方位角theta、仰角phi和距离radius）来计算相机到世界坐标的变换矩阵c2w
         c2w = trans_t(radius)
         c2w = rot_phi(phi/180.*np.pi) @ c2w
         c2w = rot_theta(theta/180.*np.pi) @ c2w
@@ -223,8 +223,8 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
         return c2w
     cam_infos = []
     # generate render poses and times
-    render_poses = torch.stack([pose_spherical(angle, -30.0, 4.0) for angle in np.linspace(-180,180,160+1)[:-1]], 0)
-    render_times = torch.linspace(0,maxtime,render_poses.shape[0])
+    render_poses = torch.stack([pose_spherical(angle, -30.0, 4.0) for angle in np.linspace(-180,180,160+1)[:-1]], 0)    #生成161个相机的渲染姿态
+    render_times = torch.linspace(0,maxtime,render_poses.shape[0])      #为每个相机姿态生成一个时间戳
     with open(os.path.join(path, template_transformsfile)) as json_file:
         template_json = json.load(json_file)
         try:
@@ -234,7 +234,7 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
     print("hello!!!!")
     # breakpoint()
     # load a single image to get image info.
-    for idx, frame in enumerate(template_json["frames"]):
+    for idx, frame in enumerate(template_json["frames"]):   
         cam_name = os.path.join(path, frame["file_path"] + extension)
         image_path = os.path.join(path, cam_name)
         image_name = Path(cam_name).stem
@@ -243,7 +243,7 @@ def generateCamerasFromTransforms(path, template_transformsfile, extension, maxt
         image = PILtoTorch(image,(800,800))
         break
     # format information
-    for idx, (time, poses) in enumerate(zip(render_times,render_poses)):
+    for idx, (time, poses) in enumerate(zip(render_times,render_poses)):    #遍历渲染姿态，与其对应的时间戳，生成对应的变换矩阵，用于生成随时间变换观察视角的video
         time = time/maxtime
         matrix = np.linalg.inv(np.array(poses))
         R = -np.transpose(matrix[:3,:3])
@@ -261,87 +261,87 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
 
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
-        try:
+        try:    #拿到相机的角度
             fovx = contents["camera_angle_x"]
         except:
             fovx = focal2fov(contents['fl_x'],contents['w'])
         frames = contents["frames"]
         for idx, frame in enumerate(frames):
             cam_name = os.path.join(path, frame["file_path"] + extension)
-            time = mapper[frame["time"]]
-            matrix = np.linalg.inv(np.array(frame["transform_matrix"]))
+            time = mapper[frame["time"]]        #可以看出mapper是用的真实时间映射的0-1序列
+            matrix = np.linalg.inv(np.array(frame["transform_matrix"]))     #对转化矩阵求逆，表示从世界坐标映射到相机坐标
             R = -np.transpose(matrix[:3,:3])
-            R[:,0] = -R[:,0]
-            T = -matrix[:3, 3]
+            R[:,0] = -R[:,0]    #提取旋转矩阵3*3
+            T = -matrix[:3, 3]  #提取平移矩阵1*3
 
             image_path = os.path.join(path, cam_name)
             image_name = Path(cam_name).stem
             image = Image.open(image_path)
 
-            im_data = np.array(image.convert("RGBA"))
+            im_data = np.array(image.convert("RGBA"))   #将图片转为RGBA的格式 ，图片的尺寸为800*800，所以shape=[800,800,4]
 
-            bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
+            bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])     #设置background
 
-            norm_data = im_data / 255.0
-            arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+            norm_data = im_data / 255.0     #归一化，这里了解到透明度的范围也是0-255，shape=[800,800,4]
+            arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])    #这里的操作是将rgb乘以透明度同时将剩余部分用背景色填充
             image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
             image = PILtoTorch(image,(800,800))
-            fovy = focal2fov(fov2focal(fovx, image.shape[1]), image.shape[2])
+            fovy = focal2fov(fov2focal(fovx, image.shape[1]), image.shape[2])       #获取相机的垂直水平视角野
             FovY = fovy 
             FovX = fovx
-
+            #获取当前这张图片得到的相机信息，包括相机的序号(跟随图片),世界坐标系到相机坐标系的旋转矩阵和平移矩阵(这块可能反了)，相机的垂直水平视角野，路径、名字、像素大小(2),时间戳(这里不是真实时间戳，是映射到0-1的时间戳)
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                             image_path=image_path, image_name=image_name, width=image.shape[1], height=image.shape[2],
                             time = time, mask=None))
             
     return cam_infos
-def read_timeline(path):
+def read_timeline(path):    #读取数据，拿到一个相机angle_x，以及各个帧的信息，每个帧中的信息包含file_path，旋转角度，当前帧对应的时间，变换矩阵(用于从真实世界映射到相机坐标中)
     with open(os.path.join(path, "transforms_train.json")) as json_file:
         train_json = json.load(json_file)
     with open(os.path.join(path, "transforms_test.json")) as json_file:
         test_json = json.load(json_file)  
     time_line = [frame["time"] for frame in train_json["frames"]] + [frame["time"] for frame in test_json["frames"]]
-    time_line = set(time_line)
+    time_line = set(time_line)  #去重并排序
     time_line = list(time_line)
     time_line.sort()
     timestamp_mapper = {}
     max_time_float = max(time_line)
-    for index, time in enumerate(time_line):
+    for index, time in enumerate(time_line):    #将真实时间映射为一个0-1的序列
         # timestamp_mapper[time] = index
         timestamp_mapper[time] = time/max_time_float
 
     return timestamp_mapper, max_time_float
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
-    timestamp_mapper, max_time = read_timeline(path)
-    print("Reading Training Transforms")
+    timestamp_mapper, max_time = read_timeline(path)    #拿到数据集中的每一帧的时间序列(归一化成0-1),返回真实时间的最大时间点
+    print("Reading Training Transforms")#获取当前这张图片得到的相机信息，包括相机的序号(跟随图片),世界坐标系到相机坐标系的旋转矩阵和平移矩阵(这块可能反了)，相机的垂直水平视角野，路径、名字、像素大小(2),时间戳(这里不是真实时间戳，是映射到0-1的时间戳)
     train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension, timestamp_mapper)
-    print("Reading Test Transforms")
+    print("Reading Test Transforms")#获取的内容如上，不过这里很奇怪的就是为什么train和test是交叉的
     test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension, timestamp_mapper)
     print("Generating Video Transforms")
-    video_cam_infos = generateCamerasFromTransforms(path, "transforms_train.json", extension, max_time)
+    video_cam_infos = generateCamerasFromTransforms(path, "transforms_train.json", extension, max_time)     #获取最后需要生成的video的每一帧的相机信息(这里的姿态是写死的161个姿态，意味着总视频帧数为161帧，每个帧之间平滑滑动相机)
     if not eval:
         train_cam_infos.extend(test_cam_infos)
         test_cam_infos = []
 
-    nerf_normalization = getNerfppNorm(train_cam_infos)
+    nerf_normalization = getNerfppNorm(train_cam_infos) #传入训练中的相机信息，获取到相机中心(这里有一个取负操作)和相机分布的最大直径(乘了1.1进行了一个保护)
 
     ply_path = os.path.join(path, "fused.ply")
-    if not os.path.exists(ply_path):
+    if not os.path.exists(ply_path):    #这个数据集没有用colmap生成初始点云，所以这里采用随机生成的方式生成初始的点云
         # Since this data set has no colmap data, we start with random points
-        num_pts = 2000
+        num_pts = 2000      #初始化点云的数量
         print(f"Generating random point cloud ({num_pts})...")
 
         # We create random points inside the bounds of the synthetic Blender scenes
-        xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
-        shs = np.random.random((num_pts, 3)) / 255.0
-        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+        xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3    #点的坐标都被限制在[-1.3,1.3]之间
+        shs = np.random.random((num_pts, 3)) / 255.0        #感觉是随机生成球谐函数的系数
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))   #将球谐函数转化为RGB颜色-->shs*C0+0.5
     # storePly(ply_path, xyz, SH2RGB(shs) * 255)
     else:
         pcd = fetchPly(ply_path)
         # xyz = -np.array(pcd.points)
         # pcd = pcd._replace(points=xyz)
 
-
+#场景存储的信息包括初始化点云，训练的相机信息，测试的相机信息，生成的video相机信息，(中心相机信息和相机分布的边界长度),点云路径,视频的最长时间
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,

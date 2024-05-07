@@ -27,44 +27,44 @@ from scene.deformation import deform_network
 from scene.regulation import compute_plane_smoothness
 class GaussianModel:
 
-    def setup_functions(self):
-        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
+    def setup_functions(self):  #用于设置一些激活函数和变换函数
+        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):    #构建协方差矩阵，该函数接受 scaling（尺度）、scaling_modifier（尺度修正因子）、rotation（旋转）作为参数
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
             actual_covariance = L @ L.transpose(1, 2)
             symm = strip_symmetric(actual_covariance)
             return symm
         
-        self.scaling_activation = torch.exp
-        self.scaling_inverse_activation = torch.log
+        self.scaling_activation = torch.exp#将尺度激活函数设置为指数函数。
+        self.scaling_inverse_activation = torch.log #将尺度逆激活函数设置为对数函数。
 
-        self.covariance_activation = build_covariance_from_scaling_rotation
+        self.covariance_activation = build_covariance_from_scaling_rotation#将协方差激活函数设置为上述定义的 build_covariance_from_scaling_rotation 函数。
 
-        self.opacity_activation = torch.sigmoid
-        self.inverse_opacity_activation = inverse_sigmoid
+        self.opacity_activation = torch.sigmoid#将不透明度激活函数设置为 sigmoid 函数。
+        self.inverse_opacity_activation = inverse_sigmoid#将不透明度逆激活函数设置为一个名为 inverse_sigmoid 的函数
 
-        self.rotation_activation = torch.nn.functional.normalize
+        self.rotation_activation = torch.nn.functional.normalize#用于归一化旋转矩阵。
 
 
     def __init__(self, sh_degree : int, args):
-        self.active_sh_degree = 0
-        self.max_sh_degree = sh_degree  
-        self._xyz = torch.empty(0)
+        self.active_sh_degree = 0                       #球谐阶数
+        self.max_sh_degree = sh_degree                  #最大球谐阶数，这里为3
+        self._xyz = torch.empty(0)                      #空间位置
         # self._deformation =  torch.empty(0)
-        self._deformation = deform_network(args)
+        self._deformation = deform_network(args)        #这里是和3DGS不同的地方，需要重点看
         # self.grid = TriPlaneGrid()
         self._features_dc = torch.empty(0)
         self._features_rest = torch.empty(0)
-        self._scaling = torch.empty(0)
-        self._rotation = torch.empty(0)
-        self._opacity = torch.empty(0)
+        self._scaling = torch.empty(0)                  #椭球的缩放--3
+        self._rotation = torch.empty(0)                 #椭球的旋转--四元数4
+        self._opacity = torch.empty(0)                  #不透明度--1
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
-        self.optimizer = None
-        self.percent_dense = 0
-        self.spatial_lr_scale = 0
-        self._deformation_table = torch.empty(0)
-        self.setup_functions()
+        self.optimizer = None                           #初始化优化器为 None。
+        self.percent_dense = 0                          #初始化百分比密度为0。
+        self.spatial_lr_scale = 0                       #初始化空间学习速率缩放为0。
+        self._deformation_table = torch.empty(0)        
+        self.setup_functions()                          #调用 setup_functions 方法设置各种激活和变换函数
 
     def capture(self):
         return (
@@ -133,39 +133,39 @@ class GaussianModel:
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
-    def oneupSHdegree(self):
+    def oneupSHdegree(self):         #每 1000 次迭代，增加球谐函数的阶数。
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, time_line: int):
-        self.spatial_lr_scale = spatial_lr_scale
+    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float, time_line: int):      #用于从给定的点云数据 pcd 创建对象的初始化状态。
+        self.spatial_lr_scale = spatial_lr_scale    #相机的最大对角线*1.1，指明高斯分布不能超过这个？
         # breakpoint()
-        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
-        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
-        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
+        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()         #shape=[pointNum,3]-->xyz
+        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())       #shape=[pointNum，3]-->三阶球谐函数的系数?
+        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()     #shape=[pointNum,3,16]--难道这才是三阶球谐函数的系数吗？
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
-        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
-        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
-        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
+        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)  #这里是计算到哪个参考点的距离我没懂
+        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)    #感觉像是控制缩放,对距离开平方,然后取log,然后增加一个None维度，在新的维度上扩展
+        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")  #生成旋转的四元数，全部置0
         rots[:, 0] = 1
 
-        opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
+        opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))    #初始化都是torch.log(0.1/(1-0.1))=-2.197左右
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._deformation = self._deformation.to("cuda") 
         # self.grid = self.grid.to("cuda")
-        self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
-        self._scaling = nn.Parameter(scales.requires_grad_(True))
+        self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))   #球谐函数的基本项
+        self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))  #球谐函数的剩余项
+        self._scaling = nn.Parameter(scales.requires_grad_(True))   
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
         self._deformation_table = torch.gt(torch.ones((self.get_xyz.shape[0]),device="cuda"),0)
-    def training_setup(self, training_args):
+    def training_setup(self, training_args):    
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -198,7 +198,7 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.deformation_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)    
 
-    def update_learning_rate(self, iteration):
+    def update_learning_rate(self, iteration):  #手动实现一个learning rate decay
         ''' Learning rate scheduling per step '''
         for param_group in self.optimizer.param_groups:
             if param_group["name"] == "xyz":

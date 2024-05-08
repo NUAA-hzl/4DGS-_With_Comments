@@ -17,7 +17,7 @@ def get_normalized_directions(directions):
 
 
 def normalize_aabb(pts, aabb):
-    return (pts - aabb[0]) * (2.0 / (aabb[1] - aabb[0])) - 1.0
+    return (pts - aabb[0]) * (2.0 / (aabb[1] - aabb[0])) - 1.0      #aabb[1]-aabb[0]是max-min，所以这里的公式是(pointXYZ-min)*2/(max-min)-1.0，意思是将这里所有的坐标都归一化到[-1,1]
 def grid_sample_wrapper(grid: torch.Tensor, coords: torch.Tensor, align_corners: bool = True) -> torch.Tensor:
     grid_dim = coords.shape[-1]
 
@@ -77,13 +77,13 @@ def interpolate_ms_features(pts: torch.Tensor,
                             num_levels: Optional[int],
                             ) -> torch.Tensor:
     coo_combs = list(itertools.combinations(
-        range(pts.shape[-1]), grid_dimensions)
+        range(pts.shape[-1]), grid_dimensions)      #这里将一个4D数据按照grid_dimensions进行组合，总共6中组合
     )
     if num_levels is None:
         num_levels = len(ms_grids)
     multi_scale_interp = [] if concat_features else 0.
     grid: nn.ParameterList
-    for scale_id,  grid in enumerate(ms_grids[:num_levels]):
+    for scale_id,  grid in enumerate(ms_grids[:num_levels]):        #对6个2D的神经网络模块，进行一个各个平面的特征解析，最后融合，这里说实话没有看懂，可能得去找HexPlane的源码
         interp_space = 1.
         for ci, coo_comb in enumerate(coo_combs):
             # interpolate in plane
@@ -160,14 +160,14 @@ class HexPlaneField(nn.Module):
     def get_density(self, pts: torch.Tensor, timestamps: Optional[torch.Tensor] = None):
         """Computes and returns the densities."""
         # breakpoint()
-        pts = normalize_aabb(pts, self.aabb)
-        pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
+        pts = normalize_aabb(pts, self.aabb)    #这里的self_aabb是之前统计的xyz中的最大值和最小值，这里进行一个归一化,将所有坐标归一化到[-1,1]
+        pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4],这里维度是[pointNum,4]
 
-        pts = pts.reshape(-1, pts.shape[-1])
-        features = interpolate_ms_features(
-            pts, ms_grids=self.grids,  # noqa
-            grid_dimensions=self.grid_config[0]["grid_dimensions"],
-            concat_features=self.concat_features, num_levels=None)
+        pts = pts.reshape(-1, pts.shape[-1])        #shape=[pointNum,4]
+        features = interpolate_ms_features(         #这里是特征插值函数，这里需要具体看看，传入参数是pts[pointNum,4]
+            pts, ms_grids=self.grids,  # noqa       #这里传入的grids就是各个平面的参数
+            grid_dimensions=self.grid_config[0]["grid_dimensions"],     #这里的grid_dimensions就是组合维度的维度，为2，以为两两组合
+            concat_features=self.concat_features, num_levels=None)      #这里说实话没有看懂，需要后续去翻HexPlane的源码,出来的特征是[pointNum,64]
         if len(features) < 1:
             features = torch.zeros((0, 1)).to(features.device)
 
@@ -176,7 +176,7 @@ class HexPlaneField(nn.Module):
 
     def forward(self,
                 pts: torch.Tensor,
-                timestamps: Optional[torch.Tensor] = None):
+                timestamps: Optional[torch.Tensor] = None):     #送进来xyz和time
 
         features = self.get_density(pts, timestamps)
 

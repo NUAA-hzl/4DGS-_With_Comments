@@ -66,7 +66,7 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
     ema_loss_for_log = 0.0
     ema_psnr_for_log = 0.0      #计算PSNR
 
-    final_iter = train_iter     #3000
+    final_iter = train_iter     #3000，20000
     
     progress_bar = tqdm(range(first_iter, final_iter), desc="Training progress")    #进度条
     first_iter += 1

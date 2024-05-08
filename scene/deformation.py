@@ -23,7 +23,7 @@ class Deformation(nn.Module):
         self.skips = skips
         self.grid_pe = grid_pe
         self.no_grid = args.no_grid
-        self.grid = HexPlaneField(args.bounds, args.kplanes_config, args.multires)
+        self.grid = HexPlaneField(args.bounds, args.kplanes_config, args.multires)      #这里的HexPlane有点神奇
         # breakpoint()
         self.args = args
         # self.args.empty_voxel=True
@@ -64,20 +64,20 @@ class Deformation(nn.Module):
         self.opacity_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 1))     #关于透明度的deform:1.Relu;2.Linear(64,64);3.Relu;4.Linear(64,1)--->opacity
         self.shs_deform = nn.Sequential(nn.ReLU(),nn.Linear(self.W,self.W),nn.ReLU(),nn.Linear(self.W, 16*3))      #关于球谐函数的deform:1.Relu;2.Linear(64,64);3.Relu;4.Linear(64,16*3)--->这里我不太懂为什么是16*3
 
-    def query_time(self, rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb):
+    def query_time(self, rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb):      #看起来是将时间信息整合到空间信息中
 
-        if self.no_grid:
+        if self.no_grid:        #如果使用网格
             h = torch.cat([rays_pts_emb[:,:3],time_emb[:,:1]],-1)
-        else:
+        else:                   #如果不使用网格
 
-            grid_feature = self.grid(rays_pts_emb[:,:3], time_emb[:,:1])
+            grid_feature = self.grid(rays_pts_emb[:,:3], time_emb[:,:1])    #前三位的xyz是真实xyz，time_sel这里也是真实time，这里送进HexPlane似乎是在按照HexPlane中的操作，将xyzt合成的4D张量分解成多个低维的张量最后再融合出来，这里出来的shape=[pointNum,64]
             # breakpoint()
-            if self.grid_pe > 1:
-                grid_feature = poc_fre(grid_feature,self.grid_pe)
+            if self.grid_pe > 1:        #这里还可以将出来的融合了时间和空间信息的feature进行一个带位置信息的embedding
+                grid_feature = poc_fre(grid_feature,self.grid_pe)       
             hidden = torch.cat([grid_feature],-1) 
         
         
-        hidden = self.feature_out(hidden)   
+        hidden = self.feature_out(hidden)   #到这里是经过了HexPlane出来的融合了时空信息的feature，然后过了一层linear的Mlp，维度为64-->64
  
 
         return hidden
@@ -85,35 +85,35 @@ class Deformation(nn.Module):
     def get_empty_ratio(self):
         return self.ratio
     def forward(self, rays_pts_emb, scales_emb=None, rotations_emb=None, opacity = None,shs_emb=None, time_feature=None, time_emb=None):
-        if time_emb is None:
+        if time_emb is None:    #如果没有输入时间，代表这个是静态场景
             return self.forward_static(rays_pts_emb[:,:3])
         else:
-            return self.forward_dynamic(rays_pts_emb, scales_emb, rotations_emb, opacity, shs_emb, time_feature, time_emb)
+            return self.forward_dynamic(rays_pts_emb, scales_emb, rotations_emb, opacity, shs_emb, time_feature, time_emb)      #这里的time_ferture我没懂是什么变量
 
     def forward_static(self, rays_pts_emb):
         grid_feature = self.grid(rays_pts_emb[:,:3])
         dx = self.static_mlp(grid_feature)
         return rays_pts_emb[:, :3] + dx
     def forward_dynamic(self,rays_pts_emb, scales_emb, rotations_emb, opacity_emb, shs_emb, time_feature, time_emb):
-        hidden = self.query_time(rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb)
+        hidden = self.query_time(rays_pts_emb, scales_emb, rotations_emb, time_feature, time_emb)   #这里只用到了xyz、旋转、缩放、时间信息,但是实际上只是经过了一个HexPlane，将xyz信息与时间信息很好的融合在了一起，然后又过了一层MLP线性层出来了
         if self.args.static_mlp:
             mask = self.static_mlp(hidden)
         elif self.args.empty_voxel:
             mask = self.empty_voxel(rays_pts_emb[:,:3])
         else:
-            mask = torch.ones_like(opacity_emb[:,0]).unsqueeze(-1)
+            mask = torch.ones_like(opacity_emb[:,0]).unsqueeze(-1)  #这里我没看懂有什么用
         # breakpoint()
         if self.args.no_dx:
             pts = rays_pts_emb[:,:3]
         else:
-            dx = self.pos_deform(hidden)
+            dx = self.pos_deform(hidden)        #将经过了HexPlane和Mlp的feature送到x的deformation里面去，过……(详见pos_deform)中的定义，出来xyz
             pts = torch.zeros_like(rays_pts_emb[:,:3])
-            pts = rays_pts_emb[:,:3]*mask + dx
+            pts = rays_pts_emb[:,:3]*mask + dx  #实现一个xyz+Delta(xyz)的作用 
         if self.args.no_ds :
             
             scales = scales_emb[:,:3]
         else:
-            ds = self.scales_deform(hidden)
+            ds = self.scales_deform(hidden)     #和上面一样
 
             scales = torch.zeros_like(scales_emb[:,:3])
             scales = scales_emb[:,:3]*mask + ds
@@ -121,9 +121,9 @@ class Deformation(nn.Module):
         if self.args.no_dr :
             rotations = rotations_emb[:,:4]
         else:
-            dr = self.rotations_deform(hidden)
+            dr = self.rotations_deform(hidden)  #和上面一样
 
-            rotations = torch.zeros_like(rotations_emb[:,:4])
+            rotations = torch.zeros_like(rotations_emb[:,:4])   
             if self.args.apply_rotation:
                 rotations = batch_quaternion_multiply(rotations_emb, dr)
             else:
@@ -132,20 +132,20 @@ class Deformation(nn.Module):
         if self.args.no_do :
             opacity = opacity_emb[:,:1] 
         else:
-            do = self.opacity_deform(hidden) 
+            do = self.opacity_deform(hidden) #和上面一样
           
             opacity = torch.zeros_like(opacity_emb[:,:1])
             opacity = opacity_emb[:,:1]*mask + do
         if self.args.no_dshs:
             shs = shs_emb
         else:
-            dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])
+            dshs = self.shs_deform(hidden).reshape([shs_emb.shape[0],16,3])#和上面一样
 
             shs = torch.zeros_like(shs_emb)
             # breakpoint()
             shs = shs_emb*mask.unsqueeze(-1) + dshs
 
-        return pts, scales, rotations, opacity, shs
+        return pts, scales, rotations, opacity, shs     #这里返回了经过了deformation之后的xyz,s,r,o,shs
     def get_mlp_parameters(self):
         parameter_list = []
         for name, param in self.named_parameters():
@@ -196,13 +196,13 @@ class deform_network(nn.Module):
         points = self.deformation_net(points)
         return points
     def forward_dynamic(self, point, scales=None, rotations=None, opacity=None, shs=None, times_sel=None):
-        # times_emb = poc_fre(times_sel, self.time_poc)
-        point_emb = poc_fre(point,self.pos_poc)
-        scales_emb = poc_fre(scales,self.rotation_scaling_poc)
-        rotations_emb = poc_fre(rotations,self.rotation_scaling_poc)
+        # times_emb = poc_fre(times_sel, self.time_poc)     #shs.shape=[point,16,3]，这里的16我一直没懂是什么
+        point_emb = poc_fre(point,self.pos_poc)             #这里的pos_poc是结合了位置信息的embedding的操作吧，出来的维度是结合了位置信息的embedding，shape为[pointNum,原本的维度+poc_buf*原本维度*2]，这里是[pointNum,3+3*10*2]
+        scales_emb = poc_fre(scales,self.rotation_scaling_poc)  #缩放矩阵为3元，所以出来是[pointNum,3+2*3*2]
+        rotations_emb = poc_fre(rotations,self.rotation_scaling_poc) #旋转矩阵是四元数，poc_buf维度为2，所以shape=[pointNum,4+4*2*2]
         # time_emb = poc_fre(times_sel, self.time_poc)
         # times_feature = self.timenet(time_emb)
-        means3D, scales, rotations, opacity, shs = self.deformation_net( point_emb,
+        means3D, scales, rotations, opacity, shs = self.deformation_net( point_emb,     #这个网络输入的是经过embedding之后的xyz[pointNum,63]，缩放矩阵[pointNum.15]，旋转矩阵[pointNum,20]，透明度[pointNum,1]，shs系数[pointNum,16,3],time_sel[pointNum,1]
                                                   scales_emb,
                                                 rotations_emb,
                                                 opacity,
@@ -222,9 +222,9 @@ def initialize_weights(m):
         if m.bias is not None:
             init.xavier_uniform_(m.weight,gain=1)
             # init.constant_(m.bias, 0)
-def poc_fre(input_data,poc_buf):
+def poc_fre(input_data,poc_buf):                    #这个函数我没有搞懂是什么意思，感觉像是结合了位置信息的embedding,将原本的xyz同对应的位置信息分别扩展，然后用sin和cos进行一个计算，得到对应的poc_buf*原本信息维度(例如在xyz中是3)，最终拼接原本的信息和过了sin和cos的信息，出来一个结合了位置信息的embedding，shape为[pointNum,原本的维度+poc_buf*原本维度*2]
 
-    input_data_emb = (input_data.unsqueeze(-1) * poc_buf).flatten(-2)
+    input_data_emb = (input_data.unsqueeze(-1) * poc_buf).flatten(-2)       #在point的xyz方面，将[point,3]-->[point,3,1]*[10]--->[point,3,10]-->[point,30]
     input_data_sin = input_data_emb.sin()
     input_data_cos = input_data_emb.cos()
     input_data_emb = torch.cat([input_data, input_data_sin,input_data_cos], -1)
